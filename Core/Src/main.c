@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -31,7 +32,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define LEN_BUFFER 4096
+#define LEN_DATA_UART 512
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,8 +47,11 @@ DMA_HandleTypeDef hdma_adc1;
 
 UART_HandleTypeDef huart1;
 
+osThreadId defaultTaskHandle;
+osSemaphoreId myBinarySem01Handle;
+osStaticSemaphoreDef_t myBinarySem01ControlBlock;
 /* USER CODE BEGIN PV */
-
+uint8_t cant_conversiones_adc = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,12 +60,14 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_ADC1_Init(void);
+void StartDefaultTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint16_t rawValues[4098];
+uint16_t rawValues[LEN_BUFFER];
 /* USER CODE END 0 */
 
 /**
@@ -98,21 +105,55 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* Create the semaphores(s) */
+  /* definition and creation of myBinarySem01 */
+  osSemaphoreStaticDef(myBinarySem01, &myBinarySem01ControlBlock);
+  myBinarySem01Handle = osSemaphoreCreate(osSemaphore(myBinarySem01), 0);
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
   /* Starts the ADC in DMA mode*/
 
-  uint16_t temp;
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)rawValues, 4098);
+//  uint16_t temp;
 
   while (1)
   {
-	HAL_GPIO_TogglePin(LED_PIN_GPIO_Port, LED_PIN_Pin);
+//	HAL_GPIO_TogglePin(LED_PIN_GPIO_Port, LED_PIN_Pin);
 //	for (int i = 0; i < 4098; i++) {
-		temp = rawValues[0] * 3300 / 4095;		HAL_UART_Transmit(&huart1, temp, 2, HAL_MAX_DELAY);
+//		temp = rawValues[0] * 3300 / 4095;
+//		HAL_UART_Transmit(&huart1, temp, 2, HAL_MAX_DELAY);
 //	}
-	HAL_Delay(1000);
+//	HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -256,7 +297,7 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
 }
@@ -292,7 +333,60 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+//void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
+//	cant_conversiones_adc++;
+//	if (cant_conversiones_adc >= LEN_DATA_UART) {
+//		osSemaphoreRelease(myBinarySem01Handle);
+//		cant_conversiones_adc %= LEN_DATA_UART;
+//	}
+//}
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  uint8_t position = 0;
+  const uint8_t value_reset = LEN_BUFFER / LEN_DATA_UART;
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)rawValues, LEN_BUFFER);
+  /* Infinite loop */
+  for(;;)
+  {
+//	  osSemaphoreWait(myBinarySem01Handle, 0);
+	  HAL_UART_Transmit(&huart1, (uint8_t *)rawValues + position * LEN_DATA_UART, LEN_DATA_UART, HAL_MAX_DELAY);
+	  position++;
+	  position %= value_reset;
+	  vTaskDelay(pdMS_TO_TICKS(.5));
+  }
+  /* USER CODE END 5 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
